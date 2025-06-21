@@ -39,6 +39,7 @@ jobs:
           pytest # Execute your tests
         env:
           # Add any environment variables needed for your tests
+          PYTHONPATH: ${{ github.workspace }} # Sets PYTHONPATH to the root of your repository
           PYTHONUNBUFFERED: "1" # Ensures Python output is unbuffered, useful for logs
 
   build_and_deploy:
