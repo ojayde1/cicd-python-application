@@ -81,6 +81,11 @@ def index():
                                      usd_to_ngn=result['usd_to_ngn'],
                                      last_updated=result['last_updated'],
                                      current_time=result['current_time'])
+# New: Health check endpoint (highly recommended for CI/CD/Docker)
+@app.route('/health')
+def health_check():
+    """Simple health check endpoint for monitoring."""
+    return "OK", 200    
 
 def main():
     """Command line display of exchange rate"""
