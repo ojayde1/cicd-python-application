@@ -1,0 +1,131 @@
+name: Python App CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ] # Triggers on pushes to the 'main' branch
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  test:
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4 # Checks out your repository under $GITHUB_WORKSPACE
+
+      - name: Set up Python
+        uses: actions/setup-python@v5 # Sets up a Python environment
+        with:
+          python-version: '3.9' # Specify the Python version your application uses (e.g., '3.8', '3.9', '3.10')
+          cache: 'pip' # Cache pip dependencies for faster installs
+
+      - name: Install Python dependencies
+        # Installs packages from requirements.txt. Adjust if your project uses Poetry, pipenv, etc.
+        run: pip install -r requirements.txt
+
+      - name: Run Linters (e.g., Flake8, Black)
+        # Assuming you have linting tools configured. Add/remove as needed.
+        # Install if not already in requirements.txt: pip install flake8 black
+        run: |
+          pip install flake8 # Ensure linter is installed for the CI environment
+          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 . --count --exit-zero --max-complexity=10 --max-line-length=120 --statistics
+
+      - name: Run Tests
+        # Runs your unit and integration tests (e.g., using pytest).
+        # Install if not already in requirements.txt: pip install pytest
+        run: |
+          pip install pytest # Ensure pytest is installed for the CI environment
+          pytest # Execute your tests
+        env:
+          # Add any environment variables needed for your tests
+          PYTHONUNBUFFERED: "1" # Ensures Python output is unbuffered, useful for logs
+
+  build_and_deploy:
+    needs: test # This job will only run if the 'test' job succeeds
+    runs-on: ubuntu-latest
+    # This condition ensures deployment only happens on push or manual trigger, not other events like PRs
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        # Sets up Docker Buildx to allow building multi-platform images and caching
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        # Logs into Docker Hub using secrets for security
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push Python Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: . # '.' means the Dockerfile and source code are in the root of the repo
+          push: true
+          tags: ojayde35/cicd-python-app:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64 
+
+      - name: Deploy to server
+        # Uses SSH to connect to your EC2 instance and run deployment commands
+        uses: appleboy/ssh-action@v1.0.0 # IMPORTANT: Use a specific version like v1.0.0
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          # The commands to execute on the remote EC2 instance
+          script: |
+            # Define the application directory on your EC2 instance
+            # IMPORTANT: Customize 'your-python-app' to match your project name
+            APP_DIR="/home/${{ secrets.SERVER_USERNAME }}/cicd-python-application"
+
+            # Create the directory if it doesn't exist and ensure proper ownership
+            if [ ! -d "$APP_DIR" ]; then
+              mkdir -p "$APP_DIR"
+              # Ensure the user has ownership of the directory
+              sudo chown -R ${{ secrets.SERVER_USERNAME }}:${{ secrets.SERVER_USERNAME }} "$APP_DIR"
+            fi
+            cd "$APP_DIR"
+
+            # Create/Update the docker-compose.yaml file on the EC2 instance dynamically
+            # This ensures your EC2 instance always has the latest Compose configuration
+            cat <<EOF > docker-compose.yaml
+            version: '3.8' # Specify Docker Compose file format version
+            services:
+              python_app:
+                image: ojayde35/cicd-python-app:latest # Use the image built and pushed
+                container_name: python_app_container
+                restart: always # Ensure the container restarts if it crashes
+                ports:
+                  - "5000:5000" # IMPORTANT: Map host port 5000 to container port 5000 (adjust if your app uses a different port, e.g., Flask often uses 5000)
+                environment:
+                  FLASK_APP: app.py
+                  FLASK_ENV: production
+                  
+            EOF
+
+            # Log in to Docker Hub on the EC2 instance before pulling the image
+            # This uses the same Docker Hub credentials as the build step
+            echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login --username "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+            # Pull the latest Docker image for the Python app
+            echo "Pulling latest Python app image..."
+            docker compose pull python_app # Adjust service name if different in docker-compose.yaml
+
+            # Stop and remove existing containers, then start new ones with the latest image
+            # --force-recreate ensures a fresh container is created if image didn't change
+            echo "Starting Python application..."
+            docker compose up -d --force-recreate
+
+            # Clean up old Docker images to save disk space on EC2
+            # This helps prevent disk space issues over time
+            echo "Cleaning up old Docker images..."
+            docker image prune -f
+
+            echo "Deployment successful for Python app!"
