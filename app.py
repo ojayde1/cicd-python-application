@@ -14,11 +14,11 @@ def get_exchange_rate():
         # Using ExchangeRate-API's free endpoint
         response = requests.get('https://open.er-api.com/v6/latest/USD')
         data = response.json()
-        
+
         if response.status_code == 200 and data['result'] == 'success':
             # Get the NGN rate (USD to NGN)
             ngn_rate = data['rates'].get('NGN')
-            
+
             if ngn_rate:
                 # Calculate NGN to USD (inverse of USD to NGN)
                 usd_rate = 1 / ngn_rate
@@ -32,7 +32,7 @@ def get_exchange_rate():
                 return {'error': 'NGN rate not found in the response'}
         else:
             return {'error': f"API Error: {data.get('error-type', 'Unknown error')}"}
-    
+
     except requests.RequestException as e:
         return {'error': f"Request failed: {str(e)}"}
     except Exception as e:
@@ -72,27 +72,28 @@ HTML_TEMPLATE = '''
 def index():
     """Display exchange rate in web browser"""
     result = get_exchange_rate()
-    
+
     if 'error' in result:
         return render_template_string(HTML_TEMPLATE, error=result['error'])
     else:
-        return render_template_string(HTML_TEMPLATE, 
+        return render_template_string(HTML_TEMPLATE,
                                      ngn_to_usd=result['ngn_to_usd'],
                                      usd_to_ngn=result['usd_to_ngn'],
                                      last_updated=result['last_updated'],
                                      current_time=result['current_time'])
+
 # New: Health check endpoint (highly recommended for CI/CD/Docker)
 @app.route('/health')
 def health_check():
     """Simple health check endpoint for monitoring."""
-    return "OK", 200    
+    return "OK", 200
 
 def main():
     """Command line display of exchange rate"""
     print("Fetching current NGN to USD exchange rate...\n")
-    
+
     result = get_exchange_rate()
-    
+
     if 'error' in result:
         print(f"Error: {result['error']}")
     else:
@@ -105,4 +106,4 @@ def main():
 if __name__ == "__main__":
     # Run the Flask web server when executed as a script
     print("Starting web server. Access the exchange rate at http://127.0.0.1:5000/")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True) # Port kept at 5000
